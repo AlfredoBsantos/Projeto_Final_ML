@@ -15,105 +15,112 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// Estrutura de dados que enviamos para o Kafka
+// A struct de dados que estamos coletando
 type TransactionData struct {
-	Hash      string `json:"hash"`
-	To        string `json:"to"`
-	From      string `json:"from"`
-	Nonce     uint64 `json:"nonce"`
-	GasPrice  string `json:"gasPrice"`
-	GasLimit  uint64 `json:"gasLimit"`
-	Value     string `json:"value"`
-	Timestamp int64  `json:"timestamp"`
-	InputData string `json:"inputData"`
-	// BaseFeePerGas será adicionado na análise, não na coleta
+	Hash          string `json:"hash"`
+	To            string `json:"to"`
+	From          string `json:"from"`
+	Nonce         uint64 `json:"nonce"`
+	GasPrice      string `json:"gasPrice"`
+	GasLimit      uint64 `json:"gasLimit"`
+	Value         string `json:"value"`
+	Timestamp     int64  `json:"timestamp"`
+	InputData     string `json:"inputData"`
+	BaseFeePerGas string `json:"baseFeePerGas"`
 }
 
 func main() {
 	if err := godotenv.Load("../.env"); err != nil {
-		log.Fatalf("Erro ao carregar o arquivo .env: %v", err)
+		log.Fatalf("Erro ao carregar .env da pasta raiz: %v", err)
 	}
 	wssURL := os.Getenv("ALCHEMY_WSS_URL")
-	if wssURL == "" {
-		log.Fatal("ERRO: ALCHEMY_WSS_URL deve estar definido no .env")
+	kafkaBroker := os.Getenv("KAFKA_BROKER")
+	if wssURL == "" || kafkaBroker == "" {
+		log.Fatal("ERRO: ALCHEMY_WSS_URL e KAFKA_BROKER devem ser definidos")
 	}
 
-	kafkaWriter := &kafka.Writer{
-		Addr:     kafka.TCP("localhost:9092"),
-		Topic:    "mempool-transactions",
-		Balancer: &kafka.LeastBytes{},
-	}
+	kafkaWriter := &kafka.Writer{Addr: kafka.TCP(kafkaBroker), Topic: "mempool-transactions", Balancer: &kafka.LeastBytes{}}
 	defer kafkaWriter.Close()
 
-	targetContracts := map[common.Address]string{
-		common.HexToAddress("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"): "Uniswap V2 Router",
-		common.HexToAddress("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"): "Uniswap V3 Router",
-		common.HexToAddress("0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"): "Sushiswap Router",
-		common.HexToAddress("0x111111125421cA6dc452d289314280a0f8842A65"): "1inch Aggregation Router",
+	targetContracts := map[common.Address]bool{
+		common.HexToAddress("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"): true, // Uniswap V2
+		common.HexToAddress("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"): true, // Uniswap V3
+		common.HexToAddress("0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"): true, // Sushiswap
+		common.HexToAddress("0x111111125421cA6dc452d289314280a0f8842A65"): true, // 1inch
 	}
 
 	for {
-		log.Println("Tentando conectar ao nó Ethereum...")
+		log.Println("Produtor: Tentando conectar ao nó Ethereum...")
 		rpcClient, err := rpc.Dial(wssURL)
 		if err != nil {
-			log.Printf("Falha ao conectar. Tentando novamente... Erro: %v", err)
-			time.Sleep(15 * time.Second)
+			log.Printf("Falha conexão: %v", err)
+			time.Sleep(10 * time.Second)
 			continue
 		}
 
 		client := ethclient.NewClient(rpcClient)
-		txs := make(chan common.Hash)
-		sub, err := rpcClient.EthSubscribe(context.Background(), txs, "newPendingTransactions")
+		chainID, err := client.NetworkID(context.Background())
 		if err != nil {
-			log.Printf("Falha ao se inscrever no Mempool: %v", err)
+			log.Printf("Falha ao obter ChainID: %v", err)
 			rpcClient.Close()
 			continue
 		}
 
-		log.Println("Coletor de Dados vFinal iniciado. Monitorando o Mempool...")
+		headers := make(chan *types.Header)
+		sub, err := client.SubscribeNewHead(context.Background(), headers)
+		if err != nil {
+			log.Printf("Falha subscrição: %v", err)
+			rpcClient.Close()
+			continue
+		}
+
+		log.Println("Produtor: Conexão estabelecida. Coletando dados de blocos confirmados...")
 
 	Loop:
 		for {
 			select {
 			case err := <-sub.Err():
-				log.Printf("Erro na subscrição (conexão perdida): %v", err)
+				log.Printf("Erro subscrição: %v", err)
 				break Loop
-			case txHash := <-txs:
-				go func(hash common.Hash) {
-					tx, isPending, _ := client.TransactionByHash(context.Background(), hash)
-					if !isPending || tx.To() == nil {
+			case header := <-headers:
+				go func(blockHeader *types.Header) {
+					block, err := client.BlockByNumber(context.Background(), blockHeader.Number)
+					if err != nil {
 						return
 					}
-					if _, ok := targetContracts[*tx.To()]; ok {
-						chainID, _ := client.NetworkID(context.Background())
-						from, _ := types.Sender(types.NewEIP155Signer(chainID), tx)
 
-						data := TransactionData{
-							Hash:      hash.Hex(),
-							To:        tx.To().Hex(),
-							From:      from.Hex(),
-							Nonce:     tx.Nonce(),
-							GasPrice:  tx.GasPrice().String(),
-							GasLimit:  tx.Gas(),
-							Value:     tx.Value().String(),
-							Timestamp: time.Now().Unix(),
-							InputData: "0x" + common.Bytes2Hex(tx.Data()),
+					baseFee := "0"
+					if block.BaseFee() != nil {
+						baseFee = block.BaseFee().String()
+					}
+
+					for _, tx := range block.Transactions() {
+						if tx.To() == nil {
+							continue
 						}
-						jsonData, _ := json.Marshal(data)
-
-						err = kafkaWriter.WriteMessages(context.Background(), kafka.Message{Value: jsonData})
-						if err != nil {
-							log.Printf("!!! Falha ao enviar para o Kafka: %v", err)
-						} else {
-							log.Printf(">>> Alvo Detectado! Dados brutos enviados para o Kafka: %s", hash.Hex())
+						if _, ok := targetContracts[*tx.To()]; ok {
+							// CORREÇÃO: Usamos o chainID que já buscamos
+							from, _ := types.Sender(types.NewEIP155Signer(chainID), tx)
+							data := TransactionData{
+								Hash: tx.Hash().Hex(), To: tx.To().Hex(), From: from.Hex(), InputData: "0x" + common.Bytes2Hex(tx.Data()),
+								Nonce: tx.Nonce(), GasPrice: tx.GasPrice().String(), GasLimit: tx.Gas(), Value: tx.Value().String(),
+								Timestamp: int64(block.Time()), BaseFeePerGas: baseFee,
+							}
+							jsonData, _ := json.Marshal(data)
+							err = kafkaWriter.WriteMessages(context.Background(), kafka.Message{Value: jsonData})
+							if err != nil {
+								log.Printf("!!! PRODUTOR: Falha ao enviar para Kafka: %v", err)
+							} else {
+								log.Printf(">>> PRODUTOR: Bloco #%d | Alvo Detectado e Enviado: %s", block.NumberU64(), tx.Hash().Hex())
+							}
 						}
 					}
-				}(txHash)
+				}(header)
 			}
 		}
 		sub.Unsubscribe()
 		rpcClient.Close()
-		log.Println("Conexão perdida. Tentando reconectar...")
+		log.Println("Produtor: Conexão perdida. Reconectando...")
 		time.Sleep(5 * time.Second)
 	}
 }

@@ -27,13 +27,13 @@ services:
     image: timescale/timescaledb:latest-pg14
     container_name: timescaledb
     ports:
-      - "5433:5432"
+      - "5432:5432"
     environment:
       - POSTGRES_USER=admin
-      # MUDANÇA IMPORTANTE: Nova senha para forçar a reinicialização correta
-      - POSTGRES_PASSWORD=supersecret
+      - POSTGRES_PASSWORD=admin
       - POSTGRES_DB=mempool_data
-    # A SEÇÃO DE VOLUMES FOI COMPLETAMENTE REMOVIDA PARA ESTE TESTE
+    volumes:
+      - ./data/timescaledb:/var/lib/postgresql/data
 
   redpanda-console:
     image: docker.redpanda.com/redpandadata/console:latest
@@ -44,3 +44,6 @@ services:
       - "8080:8080"
     environment:
       KAFKA_BROKERS: kafka:29092
+
+volumes:
+  timescaledb-data:
