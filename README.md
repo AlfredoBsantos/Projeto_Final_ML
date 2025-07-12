@@ -1,108 +1,98 @@
-Sniper Bot Preditivo: Detecção de Anomalias em Transações DeFi com Aprendizagem Não Supervisionada
-Autor: Alfredo B. Santos
-Curso: Machine Learning
-Data: Julho de 2025
+# Sniper Bot Preditivo: Detecção de Anomalias em Transações DeFi
 
-1. Visão Geral do Projeto
-Este projeto documenta a construção de um ecossistema completo para a análise e detecção de anomalias em transações na blockchain Ethereum. O objetivo final é desenvolver um modelo de Inteligência Artificial capaz de identificar, em tempo real, transações com características de operações de arbitragem ou MEV (Maximal Extractable Value), que se manifestam como anomalias comportamentais em um mercado altamente competitivo.
+**Autor:** Alfredo B. Santos  
+**Status:** Projeto Concluído (Fase de Pesquisa e Desenvolvimento)
 
-Diferente de abordagens que buscam decodificar o conteúdo de cada transação, este projeto foca em uma estratégia de Machine Learning Não Supervisionado, ensinando um modelo a aprender o que é um comportamento "normal" e, assim, isolar os "pontos fora da curva" que representam as oportunidades de maior interesse.
+## 1. Visão Geral do Projeto
 
-A arquitetura final consiste em duas partes principais:
+Este projeto documenta a concepção, arquitetura, desenvolvimento e implementação de um ecossistema completo para a **detecção de anomalias em transações na blockchain Ethereum**. A hipótese central é que operações de arbitragem e MEV (Maximal Extractable Value), por sua natureza competitiva e urgente, exibem características comportamentais distintas que podem ser identificadas por modelos de Machine Learning não supervisionado.
 
-Um Coletor de Dados de alta performance, escrito em Go, que monitora a Ethereum Mainnet 24/7 e salva dados enriquecidos em um arquivo local.
+O sistema foi construído para ser uma plataforma de pesquisa quantitativa, com foco em um pipeline de dados robusto e um laboratório de análise flexível para testar e validar estratégias de trading algorítmico.
 
-Um Laboratório de Análise e IA, desenvolvido em um Jupyter Notebook com Python, que processa os dados coletados, faz a engenharia de features e treina o modelo de detecção de anomalias.
+### Tecnologias Utilizadas
+* **Coleta de Dados:** Go (Golang)
+* **Análise e IA:** Python, Pandas, Scikit-learn, Jupyter Notebook
+* **Infraestrutura (Prototipagem):** Docker, Kafka, PostgreSQL
+* **Conexão Blockchain:** Alchemy (Nó Ethereum Mainnet)
 
-2. A Arquitetura do Pipeline de Dados
-Após uma fase de pesquisa e desenvolvimento que explorou arquiteturas complexas com Kafka e múltiplos microserviços, optou-se por uma abordagem mais robusta e direta para garantir a integridade dos dados e focar no objetivo de Machine Learning.
+---
 
-O pipeline final é um fluxo simplificado e poderoso:
+## 2. Arquitetura Final do Projeto (MVP)
 
-Coletor em Go (Mainnet) -> Arquivo de Log (.jsonl) -> Laboratório de Análise (Jupyter)
+Após uma fase de desenvolvimento que explorou uma arquitetura de microsserviços com Kafka, a estratégia foi pivotada para um modelo **simplificado e mais robusto** para o ambiente de pesquisa, eliminando pontos de falha de infraestrutura e focando na qualidade dos dados e na prototipagem da IA.
 
-Componentes:
-Coletor (sniper-bot):
+O pipeline final é um fluxo direto e eficiente:
 
-Linguagem: Go, para alta performance e concorrência.
+```
+Go Collector (Mainnet) -> Arquivo de Log (.jsonl) -> Laboratório de Análise (Python/Jupyter)
+```
 
-Conexão: Utiliza WebSockets para se conectar a um nó da Ethereum Mainnet via Alchemy.
+### Componentes
 
-Monitoramento: Escuta novos blocos (newHeads) para garantir o acesso a dados completos e confirmados.
+#### 🔹 Coletor de Dados (`sniper-bot`)
+Um serviço de alta performance escrito em **Go**, responsável por:
+- **Conectar-se** a um nó da Ethereum Mainnet via WebSockets.
+- **Monitorar** novos blocos (`newHeads`) em tempo real.
+- **Filtrar** transações destinadas a uma lista pré-definida de contratos de alto volume (ex: Roteadores da Uniswap).
+- **Enriquecer** os dados, capturando metadados cruciais como `gasPrice`, `baseFeePerGas`, `value` e o `inputData` completo.
+- **Salvar** cada transação de interesse como uma nova linha em um arquivo local `mainnet_data.jsonl`, garantindo uma coleta de dados persistente e resiliente.
 
-Filtragem: Foca a coleta em endereços de contratos de alto volume (Roteadores da Uniswap V2 e V3) para garantir a relevância dos dados.
+#### 🔹 Laboratório de Análise e IA (`data-analysis`)
+Um ambiente de ciência de dados autocontido, utilizando um **Jupyter Notebook**, que realiza o fluxo completo de Machine Learning:
+- **Carregamento:** Lê os dados diretamente do arquivo `.jsonl` gerado pelo coletor.
+- **Engenharia de Features:** Processa os dados brutos para criar "pistas" comportamentais.
+- **Modelagem:** Aplica algoritmos de aprendizagem não supervisionada para encontrar padrões.
+- **Análise e Visualização:** Gera relatórios estatísticos e gráficos para interpretar os resultados do modelo.
 
-Enriquecimento: Para cada transação de interesse, coleta metadados cruciais como gasPrice, gasLimit, value, e o baseFeePerGas do bloco, além do inputData completo.
+---
 
-Saída: Salva cada transação enriquecida como uma linha em um arquivo mainnet_data.jsonl.
+## 3. A Ciência de Dados: Da Análise à Detecção de Anomalias
 
-Laboratório de Análise (data-analysis):
+O coração do projeto é o processo de transformar dados em inteligência.
 
-Ambiente: Jupyter Notebook rodando em um ambiente Conda (sniper_env).
+### 3.1. Engenharia de Features
+As seguintes features foram criadas para descrever o "comportamento" de cada transação, em vez de seu conteúdo:
 
-Ferramentas: Python, com as bibliotecas pandas para manipulação de dados, matplotlib e seaborn para visualização, e scikit-learn para o Machine Learning.
+* `priority_fee`: Calculada como `gasPrice - baseFeePerGas`. É nosso principal indicador de **urgência**.
+* `input_data_size`: O tamanho do `inputData`. Um forte indicador de **complexidade** da transação.
+* `value` e `gasLimit`: O valor em ETH da transação e seu "orçamento" de gás.
 
-3. A Ciência de Dados: Do Dado à Detecção
-O coração do projeto reside no notebook de análise, que executa um pipeline de Machine Learning completo.
+### 3.2. Modelo Não Supervisionado
+Dada a natureza do problema (encontrar eventos raros e "estranhos" sem um gabarito), a abordagem escolhida foi a de **Detecção de Anomalias**.
 
-3.1. Engenharia de Features Comportamentais
-O objetivo não é entender o conteúdo de cada transação, mas sim sua "linguagem corporal". Para isso, criamos as seguintes features a partir dos dados brutos:
+* **Algoritmo:** **Isolation Forest** (`sklearn.ensemble.IsolationForest`).
+* **Lógica:** O modelo aprende o que é o comportamento "normal" da grande maioria das transações e, em seguida, mede quão fácil é "isolar" cada ponto de dados. Transações que são facilmente isoladas são classificadas como **anomalias**.
 
-priority_fee (Gorjeta de Urgência): Calculada como gasPrice - baseFeePerGas. É a nossa principal pista, indicando o quão desesperado o remetente estava para que sua transação fosse incluída rapidamente. Uma gorjeta alta é um forte indicador de uma operação de MEV/Arbitragem.
+---
 
-input_data_size (Assinatura de Complexidade): O comprimento do inputData. Transações complexas (como swaps em roteadores modernos) possuem um "script" muito maior que transferências simples.
+## 4. Resultados e Conclusão
 
-value e gas_limit: O valor em ETH sendo movido e o "orçamento" de gás da transação.
+A aplicação do modelo em um dataset com milhares de transações reais coletadas da Mainnet validou com sucesso a hipótese inicial:
 
-3.2. Modelo de Aprendizagem Não Supervisionada
-Como não temos um "gabarito" prévio do que é uma oportunidade, utilizamos uma abordagem não supervisionada.
+> O modelo não supervisionado foi capaz de identificar um cluster de transações anômalas. Uma análise estatística subsequente provou que essas anomalias possuíam, em média, uma **`priority_fee` e um `gas_limit` significativamente maiores** que as transações normais, confirmando que o modelo está, de fato, detectando as operações de maior urgência e complexidade, que são os alvos mais prováveis para uma estratégia de arbitragem.
 
-Algoritmo: Isolation Forest da biblioteca scikit-learn.
+Este projeto conclui com sucesso a criação de uma plataforma de análise de ponta a ponta, desde a coleta de dados brutos da blockchain até o treinamento de um modelo de IA capaz de extrair insights valiosos do mercado.
 
-Como Funciona: O modelo aprende a estrutura das transações "normais". Ele constrói "árvores de isolamento" e mede quão fácil é isolar um ponto de dados do resto. Pontos que são facilmente isolados são considerados anomalias.
+---
 
-Objetivo: Identificar os outliers no nosso dataset — as transações cujo comportamento (urgência, complexidade, valor) foge drasticamente do padrão.
+## 5. Como Executar o Projeto (Ambiente Local)
 
-4. Resultados e Conclusão
-Ao aplicar o modelo em um dataset com 8.163 transações reais coletadas da Mainnet, obtivemos os seguintes resultados:
+**Pré-requisitos:**
+- Go (v1.20+)
+- Anaconda com um ambiente Python 3.10+
+- Chave de API da Alchemy
 
-Detecção: O modelo conseguiu classificar com sucesso um subconjunto de transações como anomalias.
-
-Validação: Uma análise estatística dos resultados mostrou que as transações classificadas como anômalas tinham, em média, uma priority_fee e um gas_limit ordens de magnitude maiores que as transações normais.
-
-Conclusão Final: O projeto provou com sucesso que é possível usar técnicas de aprendizagem não supervisionada para detectar anomalias comportamentais no fluxo de transações da Ethereum. Validamos a hipótese de que operações de arbitragem/MEV deixam uma "impressão digital" característica, mesmo quando seu conteúdo é complexo ou ofuscado.
-
-Este trabalho estabelece uma base sólida para a criação de um bot de trading autônomo, onde as previsões deste modelo podem ser usadas como o principal gatilho para a execução de estratégias de arbitragem em tempo real.
-
-5. Como Executar o Projeto
-Pré-requisitos:
-
-Go instalado.
-
-Anaconda/Miniconda instalado.
-
-Chave de API da Alchemy.
-
-Passos:
-
-Estrutura: Organize o projeto na estrutura de pastas definida.
-
-Configuração: Crie o arquivo .env na raiz do projeto e adicione sua ALCHEMY_WSS_URL.
-
-Coleta de Dados:
-
-Abra um terminal na pasta sniper-bot.
-
-Rode go mod tidy para instalar as dependências.
-
-Rode go run main.go. Deixe este terminal rodando para coletar os dados.
-
-Análise e Treinamento:
-
-Abra o Anaconda Prompt e ative o ambiente: conda activate sniper_env.
-
-Navegue até a pasta data-analysis.
-
-Inicie o Jupyter: jupyter notebook.
-
-Abra o notebook do projeto e execute as células para carregar os dados do arquivo mainnet_data.jsonl e treinar o modelo.
+**Passos:**
+1.  **Configuração:** Crie um arquivo `.env` na raiz do projeto com sua `ALCHEMY_WSS_URL`.
+2.  **Coleta de Dados:**
+    ```bash
+    # Abra um terminal
+    cd sniper-bot/
+    go mod tidy
+    go run main.go
+    ```
+    *Deixe este terminal rodando para coletar dados. Um arquivo `mainnet_data.jsonl` será criado.*
+3.  **Análise e Treinamento da IA:**
+    * Inicie o Jupyter Notebook.
+    * Abra o notebook na pasta `data-analysis`.
+    * Execute as células para carregar os dados do `mainnet_data.jsonl` e realizar a análise.
