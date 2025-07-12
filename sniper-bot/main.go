@@ -15,7 +15,6 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// A struct de dados que estamos coletando
 type TransactionData struct {
 	Hash          string `json:"hash"`
 	To            string `json:"to"`
@@ -35,18 +34,18 @@ func main() {
 	}
 	wssURL := os.Getenv("ALCHEMY_WSS_URL")
 	kafkaBroker := os.Getenv("KAFKA_BROKER")
-	if wssURL == "" || kafkaBroker == "" {
-		log.Fatal("ERRO: ALCHEMY_WSS_URL e KAFKA_BROKER devem ser definidos")
+	kafkaTopic := os.Getenv("KAFKA_TOPIC")
+	if wssURL == "" || kafkaBroker == "" || kafkaTopic == "" {
+		log.Fatal("ERRO: Variáveis de ambiente faltando no .env")
 	}
 
-	kafkaWriter := &kafka.Writer{Addr: kafka.TCP(kafkaBroker), Topic: "mempool-transactions", Balancer: &kafka.LeastBytes{}}
+	kafkaWriter := &kafka.Writer{Addr: kafka.TCP(kafkaBroker), Topic: kafkaTopic, Balancer: &kafka.LeastBytes{}}
 	defer kafkaWriter.Close()
 
-	targetContracts := map[common.Address]bool{
-		common.HexToAddress("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"): true, // Uniswap V2
-		common.HexToAddress("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"): true, // Uniswap V3
-		common.HexToAddress("0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"): true, // Sushiswap
-		common.HexToAddress("0x111111125421cA6dc452d289314280a0f8842A65"): true, // 1inch
+	targetContracts := map[common.Address]string{
+		common.HexToAddress("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"): "Uniswap V2",
+		common.HexToAddress("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"): "Uniswap V3",
+		common.HexToAddress("0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"): "Sushiswap",
 	}
 
 	for {
@@ -74,7 +73,7 @@ func main() {
 			continue
 		}
 
-		log.Println("Produtor: Conexão estabelecida. Coletando dados de blocos confirmados...")
+		log.Println("Produtor: Conexão estabelecida. Coletando dados de blocos.")
 
 	Loop:
 		for {
@@ -98,8 +97,7 @@ func main() {
 						if tx.To() == nil {
 							continue
 						}
-						if _, ok := targetContracts[*tx.To()]; ok {
-							// CORREÇÃO: Usamos o chainID que já buscamos
+						if contractName, ok := targetContracts[*tx.To()]; ok {
 							from, _ := types.Sender(types.NewEIP155Signer(chainID), tx)
 							data := TransactionData{
 								Hash: tx.Hash().Hex(), To: tx.To().Hex(), From: from.Hex(), InputData: "0x" + common.Bytes2Hex(tx.Data()),
@@ -111,7 +109,7 @@ func main() {
 							if err != nil {
 								log.Printf("!!! PRODUTOR: Falha ao enviar para Kafka: %v", err)
 							} else {
-								log.Printf(">>> PRODUTOR: Bloco #%d | Alvo Detectado e Enviado: %s", block.NumberU64(), tx.Hash().Hex())
+								log.Printf(">>> PRODUTOR: Alvo (%s) no Bloco #%d enviado: %s", contractName, block.NumberU64(), tx.Hash().Hex())
 							}
 						}
 					}

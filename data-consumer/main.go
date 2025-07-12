@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
+	_ "github.com/lib/pq" // O driver do PostgreSQL
 	"github.com/segmentio/kafka-go"
 )
 
+// Estrutura para os dados que recebemos do Kafka.
+// Deve ser idêntica à estrutura que o Produtor envia.
 type TransactionData struct {
 	Hash          string `json:"hash"`
 	To            string `json:"to"`
@@ -30,16 +32,25 @@ type TransactionData struct {
 }
 
 func main() {
+	// Procura o arquivo .env na pasta pai (a raiz do projeto)
 	if err := godotenv.Load("../.env"); err != nil {
 		log.Fatalf("Erro ao carregar .env da pasta raiz: %v", err)
 	}
+
+	// Carrega as configurações do .env
 	dbHost := os.Getenv("DB_HOST")
 	dbPort := os.Getenv("DB_PORT")
 	dbUser := os.Getenv("DB_USER")
 	dbPassword := os.Getenv("DB_PASSWORD")
 	dbName := os.Getenv("DB_NAME")
 	kafkaBroker := os.Getenv("KAFKA_BROKER")
+	kafkaTopic := os.Getenv("KAFKA_TOPIC")
 
+	if dbHost == "" || kafkaBroker == "" || kafkaTopic == "" {
+		log.Fatal("ERRO: Variáveis de DB e Kafka devem estar definidas no .env")
+	}
+
+	// Monta a string de conexão com o banco de dados
 	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPassword, dbHost, dbPort, dbName)
 
 	db, err := sql.Open("postgres", connStr)
@@ -48,13 +59,21 @@ func main() {
 	}
 	defer db.Close()
 
-	kafkaReader := kafka.NewReader(kafka.ReaderConfig{Brokers: []string{kafkaBroker}, Topic: "mempool-transactions", GroupID: "local-storage-group"})
+	// Configuração do Leitor Kafka
+	kafkaReader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers: []string{kafkaBroker},
+		Topic:   kafkaTopic,
+		GroupID: "local-storage-group", // Nome do grupo de consumidores
+	})
 	defer kafkaReader.Close()
 
-	log.Println("Consumidor: Iniciado. Aguardando dados...")
+	log.Println("Consumidor: Iniciado. Aguardando dados para arquivar...")
+
+	// Canal para lidar com o encerramento gracioso (Ctrl+C)
 	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
 
+	// Loop principal para ler e salvar mensagens
 	for {
 		select {
 		case <-sigchan:
@@ -63,14 +82,21 @@ func main() {
 		default:
 			m, err := kafkaReader.ReadMessage(context.Background())
 			if err != nil {
-				continue
-			}
-			var data TransactionData
-			if err := json.Unmarshal(m.Value, &data); err != nil {
+				// Ignora erros de conexão temporários e continua tentando
 				continue
 			}
 
-			sqlStatement := `INSERT INTO transactions (hash, to_address, from_address, "inputData", event_timestamp, nonce, gas_price, gas_limit, value, base_fee_per_gas) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (hash) DO NOTHING;`
+			var data TransactionData
+			if err := json.Unmarshal(m.Value, &data); err != nil {
+				log.Printf("Consumidor: Erro ao decodificar JSON: %v", err)
+				continue
+			}
+
+			// Comando SQL para inserir os dados na tabela correta
+			sqlStatement := `
+				INSERT INTO transactions (hash, to_address, from_address, "inputData", event_timestamp, nonce, gas_price, gas_limit, value, base_fee_per_gas) 
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
+				ON CONFLICT (hash) DO NOTHING;`
 
 			_, err = db.Exec(sqlStatement, data.Hash, data.To, data.From, data.InputData, time.Unix(data.Timestamp, 0), data.Nonce, data.GasPrice, data.GasLimit, data.Value, data.BaseFeePerGas)
 			if err != nil {
