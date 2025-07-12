@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -12,9 +15,9 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/joho/godotenv"
-	"github.com/segmentio/kafka-go"
 )
 
+// Estrutura completa de dados que salvamos no arquivo
 type TransactionData struct {
 	Hash          string `json:"hash"`
 	To            string `json:"to"`
@@ -28,28 +31,105 @@ type TransactionData struct {
 	BaseFeePerGas string `json:"baseFeePerGas"`
 }
 
+// Estrutura para enviar as features para a nossa API de IA
+type FeaturesForAI struct {
+	Value         string `json:"value"`
+	GasLimit      uint64 `json:"gas_limit"`
+	InputDataSize int    `json:"input_data_size"`
+}
+
+// Estrutura para receber a previsão da nossa API de IA
+type Prediction struct {
+	IsAnomaly int `json:"is_anomaly"`
+}
+
+// processTransaction é o coração do nosso bot "agente duplo"
+func processTransaction(tx *types.Transaction, block *types.Block, client *ethclient.Client, logFile *os.File) {
+	chainID, _ := client.NetworkID(context.Background())
+	from, _ := types.Sender(types.NewEIP155Signer(chainID), tx)
+	baseFee := "0"
+	if block.BaseFee() != nil {
+		baseFee = block.BaseFee().String()
+	}
+
+	// --- TAREFA 1: AGIR COMO HISTORIADOR ---
+	// Prepara os dados completos para salvar no arquivo de log
+	dataToSave := TransactionData{
+		Hash:          tx.Hash().Hex(),
+		To:            tx.To().Hex(),
+		From:          from.Hex(),
+		InputData:     "0x" + common.Bytes2Hex(tx.Data()),
+		Nonce:         tx.Nonce(),
+		GasPrice:      tx.GasPrice().String(),
+		GasLimit:      tx.Gas(),
+		Value:         tx.Value().String(),
+		Timestamp:     int64(block.Time()),
+		BaseFeePerGas: baseFee,
+	}
+	jsonDataToSave, _ := json.Marshal(dataToSave)
+	if _, err := logFile.WriteString(string(jsonDataToSave) + "\n"); err != nil {
+		log.Printf("!!! FALHA AO SALVAR DADO NO ARQUIVO: %v", err)
+	} else {
+		log.Printf(">>> Dado salvo no arquivo: %s", tx.Hash().Hex())
+	}
+
+	// --- TAREFA 2: AGIR COMO PREDADOR ---
+	// Prepara as features para consultar a IA em tempo real
+	featuresForAI := FeaturesForAI{
+		Value:         tx.Value().String(),
+		GasLimit:      tx.Gas(),
+		InputDataSize: len(tx.Data()),
+	}
+	jsonDataForAI, _ := json.Marshal(featuresForAI)
+
+	// Consulta a API de IA
+	resp, err := http.Post("http://127.0.0.1:5000/predict", "application/json", bytes.NewBuffer(jsonDataForAI))
+	if err != nil {
+		log.Printf("!!! ERRO ao consultar a API de IA: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var prediction Prediction
+	if err := json.NewDecoder(resp.Body).Decode(&prediction); err != nil {
+		return // Ignora erros de decodificação para não poluir o log
+	}
+
+	// --- TAREFA 3: AGIR COMO EXECUTOR (COM TRAVA DE SEGURANÇA) ---
+	// Se a IA sinalizar uma anomalia, ele reporta a ação
+	if prediction.IsAnomaly == -1 { // -1 é o sinal do nosso modelo para "anomalia"
+		fmt.Println("*************************************************")
+		fmt.Printf("!!! IA SINALIZOU ANOMALIA - POTENCIAL ARBITRAGEM !!!\n")
+		fmt.Printf("Hash da Transação Gatilho: %s\n", tx.Hash().Hex())
+		fmt.Println("AÇÃO: Simulação e Execução com Flashbots seriam acionadas aqui.")
+		fmt.Println("*************************************************")
+		// A chamada final para a função 'executeArbitrage' com a lógica da Flashbots viria aqui
+		// quando você estiver pronto para operar com capital real.
+	}
+}
+
 func main() {
 	if err := godotenv.Load("../.env"); err != nil {
 		log.Fatalf("Erro ao carregar .env da pasta raiz: %v", err)
 	}
 	wssURL := os.Getenv("ALCHEMY_WSS_URL")
-	kafkaBroker := os.Getenv("KAFKA_BROKER")
-	kafkaTopic := os.Getenv("KAFKA_TOPIC")
-	if wssURL == "" || kafkaBroker == "" || kafkaTopic == "" {
-		log.Fatal("ERRO: Variáveis de ambiente faltando no .env")
+	if wssURL == "" {
+		log.Fatal("ERRO: ALCHEMY_WSS_URL deve estar definido no .env")
 	}
 
-	kafkaWriter := &kafka.Writer{Addr: kafka.TCP(kafkaBroker), Topic: kafkaTopic, Balancer: &kafka.LeastBytes{}}
-	defer kafkaWriter.Close()
+	logFile, err := os.OpenFile("mainnet_data.jsonl", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		log.Fatalf("Erro ao abrir arquivo de dados: %v", err)
+	}
+	defer logFile.Close()
 
-	targetContracts := map[common.Address]string{
-		common.HexToAddress("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"): "Uniswap V2",
-		common.HexToAddress("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"): "Uniswap V3",
-		common.HexToAddress("0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"): "Sushiswap",
+	targetContracts := map[common.Address]bool{
+		common.HexToAddress("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"): true,
+		common.HexToAddress("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"): true,
 	}
 
 	for {
-		log.Println("Produtor: Tentando conectar ao nó Ethereum...")
+		log.Println("Bot Autônomo: Conectando ao nó Ethereum...")
 		rpcClient, err := rpc.Dial(wssURL)
 		if err != nil {
 			log.Printf("Falha conexão: %v", err)
@@ -58,12 +138,6 @@ func main() {
 		}
 
 		client := ethclient.NewClient(rpcClient)
-		chainID, err := client.NetworkID(context.Background())
-		if err != nil {
-			log.Printf("Falha ao obter ChainID: %v", err)
-			rpcClient.Close()
-			continue
-		}
 
 		headers := make(chan *types.Header)
 		sub, err := client.SubscribeNewHead(context.Background(), headers)
@@ -73,7 +147,7 @@ func main() {
 			continue
 		}
 
-		log.Println("Produtor: Conexão estabelecida. Coletando dados de blocos.")
+		log.Println("Conexão estabelecida. Coletando dados e buscando oportunidades...")
 
 	Loop:
 		for {
@@ -82,43 +156,23 @@ func main() {
 				log.Printf("Erro subscrição: %v", err)
 				break Loop
 			case header := <-headers:
-				go func(blockHeader *types.Header) {
-					block, err := client.BlockByNumber(context.Background(), blockHeader.Number)
-					if err != nil {
-						return
+				block, err := client.BlockByNumber(context.Background(), header.Number)
+				if err != nil {
+					continue
+				}
+				for _, tx := range block.Transactions() {
+					if tx.To() == nil {
+						continue
 					}
-
-					baseFee := "0"
-					if block.BaseFee() != nil {
-						baseFee = block.BaseFee().String()
+					if _, ok := targetContracts[*tx.To()]; ok {
+						go processTransaction(tx, block, client, logFile)
 					}
-
-					for _, tx := range block.Transactions() {
-						if tx.To() == nil {
-							continue
-						}
-						if contractName, ok := targetContracts[*tx.To()]; ok {
-							from, _ := types.Sender(types.NewEIP155Signer(chainID), tx)
-							data := TransactionData{
-								Hash: tx.Hash().Hex(), To: tx.To().Hex(), From: from.Hex(), InputData: "0x" + common.Bytes2Hex(tx.Data()),
-								Nonce: tx.Nonce(), GasPrice: tx.GasPrice().String(), GasLimit: tx.Gas(), Value: tx.Value().String(),
-								Timestamp: int64(block.Time()), BaseFeePerGas: baseFee,
-							}
-							jsonData, _ := json.Marshal(data)
-							err = kafkaWriter.WriteMessages(context.Background(), kafka.Message{Value: jsonData})
-							if err != nil {
-								log.Printf("!!! PRODUTOR: Falha ao enviar para Kafka: %v", err)
-							} else {
-								log.Printf(">>> PRODUTOR: Alvo (%s) no Bloco #%d enviado: %s", contractName, block.NumberU64(), tx.Hash().Hex())
-							}
-						}
-					}
-				}(header)
+				}
 			}
 		}
 		sub.Unsubscribe()
 		rpcClient.Close()
-		log.Println("Produtor: Conexão perdida. Reconectando...")
+		log.Println("Conexão perdida. Reconectando...")
 		time.Sleep(5 * time.Second)
 	}
 }

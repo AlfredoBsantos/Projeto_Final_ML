@@ -1,22 +1,32 @@
 @echo off
-TITLE Painel de Controle FINAL do Sniper Bot - Ambiente LOCAL
+TITLE Painel de Controle - Bot de IA (Pipeline Simplificado)
 
-echo [1/4] Forcando a parada e remocao completa do ambiente Docker...
-docker-compose down -v
+echo =======================================================
+echo.
+echo    INICIANDO O ECOSSISTEMA DE IA SIMPLIFICADO
+echo.
+echo =======================================================
 
-echo [2/4] Iniciando nova infraestrutura Docker...
-docker-compose up -d
-
-timeout /t 20 /nobreak > NUL
-
-echo [3/4] Preparando Kafka e Banco de Dados...
-docker exec kafka kafka-topics --create --topic mempool-transactions --bootstrap-server kafka:29092 --partitions 1 --replication-factor 1
-docker exec -it timescaledb psql -U admin -d mempool_data -c "CREATE TABLE IF NOT EXISTS transactions (hash VARCHAR(66) PRIMARY KEY, to_address VARCHAR(42), from_address VARCHAR(42), nonce BIGINT, gas_price TEXT, gas_limit BIGINT, value TEXT, event_timestamp TIMESTAMPTZ, \"inputData\" TEXT, base_fee_per_gas TEXT);"
-
-echo [4/4] Iniciando bots em novas janelas...
-start "Consumidor (Arquivista)" cmd /k "cd data-consumer && go mod tidy && go run main.go"
-start "Produtor (Coletor)" cmd /k "cd sniper-bot && go mod tidy && go run main.go"
+echo [PASSO 1 de 2] Iniciando o Servidor de IA (O Cerebro)...
+REM Abre uma nova janela, ativa o conda, entra na pasta de análise e roda a API
+start "Cerebro da IA (Python API)" cmd /k "conda activate sniper_env && cd data-analysis && python api_server.py"
 
 echo.
-echo    ECOSSISTEMA LOCAL INICIADO COM SUCESSO!
+echo    Aguardando 10 segundos para a IA carregar o modelo...
+timeout /t 10 /nobreak > NUL
+
+echo.
+echo [PASSO 2 de 2] Iniciando o Bot Coletor/Executor (Go)...
+REM Abre uma nova janela, entra na pasta do bot e o inicia
+start "Bot Coletor/Executor (Go)" cmd /k "cd sniper-bot && go run main.go"
+
+echo.
+echo =======================================================
+echo.
+echo    SISTEMA COMPLETO INICIADO!
+echo.
+echo    Monitore as 2 novas janelas de terminal.
+echo.
+echo =======================================================
+
 pause
