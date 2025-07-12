@@ -96,3 +96,6 @@ Este projeto conclui com sucesso a criação de uma plataforma de análise de po
     * Inicie o Jupyter Notebook.
     * Abra o notebook na pasta `data-analysis`.
     * Execute as células para carregar os dados do `mainnet_data.jsonl` e realizar a análise.
+  
+4. **Apresentacao Final do Projeto:**
+   *https://www.youtube.com/watch?v=tmz5Uj5neDU*
